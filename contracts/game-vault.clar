@@ -246,3 +246,120 @@
 (define-private (player-exists (player principal))
   (is-some (map-get? player-scores { player: player }))
 )
+
+;; Record player score
+(define-public (record-player-score
+    (player principal)
+    (score uint)
+  )
+  (begin
+    ;; Ensure only contract owner can call this
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+
+    ;; Validate player
+    (asserts! (is-valid-principal player) ERR-INVALID-PLAYER)
+
+    ;; Validate score
+    (asserts! (> score u0) ERR-INVALID-PARAMETERS)
+    (asserts! (<= score u10000) ERR-INVALID-PARAMETERS) ;; Reasonable score limit
+
+    ;; After all validations, proceed with the player score update
+    (let (
+        (current-score (default-to {
+          total-score: u0,
+          last-updated: u0,
+          total-rewards-earned: u0,
+        }
+          (map-get? player-scores { player: player })
+        ))
+        (new-total-score (+ (get total-score current-score) score))
+      )
+      ;; Update player scores
+      (map-set player-scores { player: player } {
+        total-score: new-total-score,
+        last-updated: stacks-block-height,
+        total-rewards-earned: (+ (get total-rewards-earned current-score)
+          (* score (var-get reward-per-point))
+        ),
+      })
+
+      (ok new-total-score)
+    )
+  )
+)
+
+;; Distribute Bitcoin rewards
+(define-public (distribute-bitcoin-rewards (player principal))
+  (begin
+    ;; Ensure only contract owner can distribute
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+
+    ;; Validate player
+    (asserts! (is-valid-principal player) ERR-INVALID-PLAYER)
+
+    ;; Check if player exists in the system
+    (asserts! (player-exists player) ERR-NFT-NOT-FOUND)
+
+    ;; After all validations, proceed with reward distribution
+    (let (
+        (player-score (unwrap! (map-get? player-scores { player: player }) ERR-NFT-NOT-FOUND))
+        (total-reward (get total-rewards-earned player-score))
+      )
+      ;; Ensure sufficient reward pool and valid reward amount
+      (asserts! (> total-reward u0) ERR-INSUFFICIENT-FUNDS)
+      (asserts! (>= (var-get total-reward-pool) total-reward)
+        ERR-INSUFFICIENT-FUNDS
+      )
+
+      ;; Simulate Bitcoin reward transfer 
+      ;; Note: Actual BTC transfer would require additional implementation
+      (var-set total-reward-pool (- (var-get total-reward-pool) total-reward))
+
+      ;; Reset player rewards after distribution
+      (map-set player-scores { player: player } {
+        total-score: (get total-score player-score),
+        last-updated: stacks-block-height,
+        total-rewards-earned: u0,
+      })
+
+      (ok total-reward)
+    )
+  )
+)
+
+;; Add funds to reward pool
+(define-public (add-to-reward-pool (amount uint))
+  (begin
+    ;; Ensure only contract owner can add to pool
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+
+    ;; Validate reward pool addition
+    (asserts! (> amount u0) ERR-INVALID-PARAMETERS)
+    (asserts! (<= amount u1000000000) ERR-INVALID-PARAMETERS) ;; Prevent extremely large additions
+
+    ;; Update reward pool
+    (var-set total-reward-pool (+ (var-get total-reward-pool) amount))
+    (ok true)
+  )
+)
+
+;; Administrative Functions
+
+;; Transfer contract ownership
+(define-public (transfer-ownership (new-owner principal))
+  (begin
+    ;; Ensure only current owner can transfer
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+
+    ;; Validate new owner principal
+    (asserts! (not (is-eq new-owner tx-sender)) ERR-INVALID-PARAMETERS)
+    (asserts! (is-valid-principal new-owner) ERR-INVALID-PARAMETERS)
+
+    ;; Update contract owner
+    (var-set contract-owner new-owner)
+    (ok true)
+  )
+)
+
+;; Run initialization on contract deploy
+(initialize)
